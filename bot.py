@@ -1,8 +1,7 @@
 import os
 import logging
-from flask import Flask, request, jsonify
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, TypeHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # 设置日志
 logging.basicConfig(
@@ -11,132 +10,90 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 初始化 Flask 应用
-app = Flask(__name__)
-
-# 从环境变量获取配置
+# 获取环境变量
 TOKEN = os.getenv('TOKEN')
-RAILWAY_STATIC_URL = os.getenv('RAILWAY_STATIC_URL', '')
 
-if not TOKEN:
-    logger.error("❌ 未找到 TOKEN 环境变量！")
-    exit(1)
-
-# 创建 Telegram 应用
-application = Application.builder().token(TOKEN).build()
-
-# 存储用户数据（生产环境建议用数据库）
-user_data = {}
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理 /start 命令"""
     user = update.effective_user
-    welcome_text = f"""
-👋 你好 {user.first_name}！
+    await update.message.reply_text(
+        f"👋 你好 {user.first_name}！\n\n"
+        f"我是稳定运行的 Telegram 机器人！\n"
+        f"✅ 状态：正常运行\n"
+        f"🚀 平台：Railway\n\n"
+        f"可用命令：\n"
+        f"/start - 开始使用\n"
+        f"/help - 帮助信息\n"
+        f"/echo - 回声测试"
+    )
 
-🤖 我是运行在 Railway 上的 Telegram 机器人！
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /help 命令"""
+    help_text = """
+🤖 机器人帮助信息
 
-✅ 状态: Webhook 模式正常运行
+这是一个稳定运行的 Telegram 机器人演示。
 
-可用命令：
-/start - 开始使用
-/info - 机器人信息
-/ping - 测试响应
+命令列表：
+/start - 开始对话
+/help - 显示帮助
+/echo - 回声测试（回复你发送的消息）
 
-🚀 部署平台: Railway
+功能：
+- 稳定运行
+- 快速响应
+- 无冲突设计
     """
-    await update.message.reply_text(welcome_text)
+    await update.message.reply_text(help_text)
 
-async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /info 命令"""
-    info_text = """
-🤖 机器人信息
+async def echo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /echo 命令"""
+    if context.args:
+        text = ' '.join(context.args)
+        await update.message.reply_text(f"🔊 你说：{text}")
+    else:
+        await update.message.reply_text("请发送 /echo 后面加上你想回声的文字")
 
-📍 运行平台: Railway
-🔧 模式: Webhook
-✅ 状态: 正常运行
-🐍 语言: Python
-📦 版本: 2.0 (Webhook)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理普通文本消息"""
+    text = update.message.text
+    await update.message.reply_text(f"📝 收到消息：{text}")
 
-这是一个使用 Webhook 模式的 Telegram 机器人，彻底解决了多实例冲突问题。
-    """
-    await update.message.reply_text(info_text)
-
-async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /ping 命令"""
-    await update.message.reply_text("🏓 Pong! 机器人正常运行！")
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理错误"""
     logger.error(f"更新 {update} 导致错误: {context.error}")
 
-# 添加处理器
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("info", info_command))
-application.add_handler(CommandHandler("ping", ping_command))
-
-# 初始化机器人
-@app.before_first_request
-def initialize_bot():
-    """初始化机器人并设置 Webhook"""
-    try:
-        # 设置 Webhook
-        if RAILWAY_STATIC_URL:
-            webhook_url = f"{RAILWAY_STATIC_URL}/webhook"
-            application.bot.set_webhook(webhook_url)
-            logger.info(f"✅ Webhook 已设置: {webhook_url}")
-        else:
-            logger.warning("⚠️ 未找到 RAILWAY_STATIC_URL，Webhook 未设置")
-        
-        logger.info("🤖 机器人初始化完成")
-    except Exception as e:
-        logger.error(f"❌ 机器人初始化失败: {e}")
-
-@app.route('/')
-def home():
-    """健康检查端点"""
-    return jsonify({
-        "status": "running",
-        "bot": "online",
-        "mode": "webhook",
-        "platform": "railway"
-    })
-
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    """处理 Telegram Webhook 更新"""
-    try:
-        # 处理更新
-        update = Update.de_json(request.get_json(), application.bot)
-        await application.process_update(update)
-        return 'OK'
-    except Exception as e:
-        logger.error(f"Webhook 处理错误: {e}")
-        return 'ERROR', 500
-
-@app.route('/set_webhook', methods=['GET'])
-def set_webhook_manual():
-    """手动设置 Webhook（用于调试）"""
-    try:
-        if RAILWAY_STATIC_URL:
-            webhook_url = f"{RAILWAY_STATIC_URL}/webhook"
-            result = application.bot.set_webhook(webhook_url)
-            return jsonify({"status": "success", "webhook_url": webhook_url, "result": result})
-        else:
-            return jsonify({"status": "error", "message": "RAILWAY_STATIC_URL not found"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/delete_webhook', methods=['GET'])
-def delete_webhook():
-    """删除 Webhook（用于调试）"""
-    try:
-        result = application.bot.delete_webhook()
-        return jsonify({"status": "success", "result": result})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+def main():
+    """主函数"""
+    if not TOKEN:
+        logger.error("❌ 未找到 TOKEN 环境变量")
+        return
+    
+    # 创建应用
+    application = Application.builder().token(TOKEN).build()
+    
+    # 添加命令处理器
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("echo", echo_command))
+    
+    # 添加消息处理器
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # 添加错误处理器
+    application.add_error_handler(error_handler)
+    
+    # 启动机器人
+    print("=" * 50)
+    print("🤖 Telegram 机器人启动中...")
+    print(f"✅ Token 前10位: {TOKEN[:10]}...")
+    print("⏳ 开始轮询...")
+    print("=" * 50)
+    
+    application.run_polling(
+        drop_pending_updates=True,  # 丢弃挂起的更新，避免冲突
+        allowed_updates=['message', 'callback_query']  # 只监听这些类型
+    )
 
 if __name__ == '__main__':
-    # 启动 Flask 应用
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    main()
